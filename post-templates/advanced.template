@@ -1,0 +1,31 @@
+#
+# Advanced - Post Template
+#
+
+# Content
+advanced_template() {
+cat > ${JekyPosts}/${FileName,,}.${PostExtension} << EOF
+---
+layout: post
+title: ${PostTitle}
+date: ${PostDate}
+category: 
+tags: 
+---
+
+EOF
+}
+
+# User input
+post_fields() {
+echo "${INDICATOR} Create a new post."
+
+echo -n "${INDICATOR} File Title: "
+read FileTitle
+
+export FileName=$(echo ${FileDate}-${FileTitle// /-})
+}
+
+# Call
+post_fields
+advanced_template

@@ -1,0 +1,14 @@
+#
+# JekySimple - User Configuration
+#
+
+# [optional] Create or copy this file at your home directory then rename it as ".jekysimple" to override main config file with special settings for each user.
+# Note: The only required field is "JekySource" while any other missing fields default to their relavent value.
+
+JekySource="UNSET"
+GitHost="github.com"
+GitUsername="UNSET"
+GitPassword="UNSET"
+RepositoryName="UNSET"
+
+# Refer to main configuration "jekysimple.conf" file to learn further about what you can add or change and what are the default values.

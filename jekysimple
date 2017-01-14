@@ -1,0 +1,409 @@
+#!/bin/bash
+
+#
+# JekySimple - Static Site Management Tool
+#
+
+read_config() {
+  echo
+
+  if [[ ${EUID} -eq 0 ]]; then
+    echo "You can't run JekySimple as root." 1>&2
+    exit
+  fi
+  
+  if [ -r ${HOME}/.jekysimple ]; then
+    echo "Reading user config file for JekySimple.." >&2
+    . ${HOME}/.jekysimple
+    elif [ -f "/etc/JekySimple/jekysimple.conf" ]; then
+    echo "Reading JekySimple default config file.." >&2
+    . /etc/JekySimple/jekysimple.conf
+  else
+    echo "You don't have any active config files for JekySimple." >&2
+    exit
+  fi
+  
+  fall_to_default
+  
+  if [ "${UserCommand}" != "init" ]; then
+    
+    if [ "${JekySource}" = "UNSET" ] || [ -z "${JekySource}" ] ; then
+      echo "You can't use JekySimple without configuration." >&2
+      sleep 1
+      echo "Edit the configuration file according to your settings." >&2
+      exit
+    fi
+    
+    if [ ! -d ${JekySource} ]; then
+      echo "Directory '${JekySource}' deosn't exist." >&2
+      sleep 1
+      echo "Edit the configuration file according to your settings." >&2
+      exit
+      elif [ ! -d ${JekyLocal} ]; then
+      echo "Directory '${JekyLocal}' deosn't exist." >&2
+      sleep 1
+      echo "Edit the configuration file according to your settings." >&2
+      exit
+    fi
+    
+  fi
+  
+  if [ "${PagesBuild}" = "true" ] && [ "${WebServer}" = "true" ] ; then
+    echo "You can't use JekySimple with both 'GitHub Pages & WebServer' options enabled."
+    sleep 1
+    echo "Edit the configuration file according to your settings." >&2
+    exit
+  fi
+  
+  echo
+}
+
+fall_to_default() {
+  if [ "${JekyLocal}" = "default" ] || [ -z "${JekyLocal}" ] ; then
+    export JekyLocal=$(echo ${HOME})
+  fi
+  if [ "${JekyBuild}" = "default" ] || [ -z "${JekyBuild}" ] ; then
+    export JekyBuild=$(echo ${JekySource}/_site)
+  fi
+  if [ "${JekyPosts}" = "default" ] || [ -z "${JekyPosts}" ] ; then
+    export JekyPosts=$(echo ${JekySource}/_posts)
+  fi
+  if [ "$JekyTemplates" = "default" ] || [ -z "${JekyTemplates}" ] ; then
+    export JekyTemplates="/etc/JekySimple/templates"
+  fi
+  if [ "${BuildType}" = "default" ] || [ -z "${BuildType}" ] ; then
+    export BuildType="production"
+  fi
+  if [ "${FileDate}" = "default" ] || [ -z "${FileDate}" ] ; then
+    export FileDate=$(date +%Y-%m-%d)
+  fi
+  if [ "${PostDate}" = "default" ] || [ -z "${PostDate}" ] ; then
+    export PostDate=$(date +%Y-%m-%dT%T%:z)
+  fi
+  if [ "${PostTemplate}" = "default" ] || [ -z "${PostTemplate}" ] ; then
+    export PostTemplate="default.template"
+  fi
+  if [ "${PostExtension}" = "default" ] || [ -z "${PostExtension}" ] ; then
+    export PostExtension="markdown"
+  fi
+  if [ "${TextEditor}" = "default" ] || [ -z "${TextEditor}" ] ; then
+    export TextEditor="nano"
+  fi
+  if [ "${WebServer}" = "default" ] || [ -z "${WebServer}" ] ; then
+    export WebServer="false"
+  fi
+  if [ "${AutoDeploy}" = "default" ] || [ -z "${AutoDeploy}" ] ; then
+    export AutoDeploy="false"
+  fi
+  if [ "${AutoCommit}" = "default" ] || [ -z "${AutoCommit}" ] ; then
+    export AutoCommit="false"
+  fi
+  if [ "${CommitDescription}" = "default" ] || [ -z "${CommitDescription}" ] ; then
+    export CommitDescription="Automatic Deployment via @JekySimple"
+  fi
+  if [ "${PagesBuild}" = "default" ] || [ -z "${PagesBuild}" ] ; then
+    export PagesBuild="false"
+  fi
+  if [ "${PagesBranch}" = "default" ] || [ -z "${PagesBranch}" ] ; then
+    export PagesBranch="false"
+  fi
+  if [ "${INDICATOR}" = "default" ] || [ -z "${INDICATOR}" ] ; then
+    export INDICATOR="[JekySimple]"
+  fi
+  if [ "${LOCKDIR}" = "default" ] || [ -z "${LOCKDIR}" ] ; then
+    export LOCKDIR="/tmp/jekysimple-lock"
+  fi
+  if [ "${PIDFILE}" = "default" ] || [ -z "${PIDFILE}" ] ; then
+    export PIDFILE="${LOCKDIR}/PID"
+  fi
+  if [ "${JEKY_SUCCESS}" = "default" ] || [ -z "${JEKY_SUCCESS}" ] ; then
+    export JEKY_SUCCESS=0; ETXT[0]="JEKY_SUCCESS"
+  fi
+  if [ "${JEKY_GENERAL}" = "default" ] || [ -z "${JEKY_GENERAL}" ] ; then
+    export JEKY_GENERAL=1; ETXT[1]="JEKY_GENERAL"
+  fi
+  if [ "${JEKY_LOCKFAIL}" = "default" ] || [ -z "${JEKY_LOCKFAIL}" ] ; then
+    export JEKY_LOCKFAIL=2; ETXT[2]="JEKY_LOCKFAIL"
+  fi
+  if [ "${JEKY_RECVSIG}" = "default" ] || [ -z "${JEKY_RECVSIG}" ] ; then
+    export JEKY_RECVSIG=3; ETXT[3]="JEKY_RECVSIG"
+  fi
+}
+
+safe_mode() {
+  if [ "${UserCommand}" = "build" ] || [ "${UserCommand}" = "preview" ] || [ "${UserCommand}" = "init" ] ; then
+    
+    trap 'ECODE=$?; echo "${INDICATOR} Exit: ${ETXT[ECODE]}(${ECODE})" >&2' 0
+    echo -n "${INDICATOR} Locking.. " >&2
+    
+    if mkdir "${LOCKDIR}" &>/dev/null; then
+      
+      trap 'ECODE=$?; echo "${INDICATOR} Removing lock.." && echo "${INDICATOR} Exit Code: ${ETXT[ECODE]}(${ECODE})" >&2
+      rm -rf "${LOCKDIR}"' 0
+      echo "$$" >"${PIDFILE}"
+      trap 'echo "${INDICATOR} Killed by a signal." && fallback >&2
+      exit ${JEKY_RECVSIG}' 1 2 3 15
+      echo "Success! installed signal handlers."
+      
+    else
+      
+      OTHERPID="$(cat "${PIDFILE}")"
+      
+      if [ $? != 0 ]; then
+        echo "Lock failed, PID ${OTHERPID} is active." >&2
+        exit ${JEKY_LOCKFAIL}
+      fi
+      
+      if ! kill -0 ${OTHERPID} &>/dev/null; then
+        echo "Removing stale lock of nonexistant PID ${OTHERPID}" >&2
+        rm -rf "${LOCKDIR}"
+        echo "${INDICATOR} Restarting.." >&2
+        exec "$0" "$@"
+      else
+        echo "Lock failed, PID ${OTHERPID} is active." >&2
+        exit ${JEKY_LOCKFAIL}
+      fi
+      
+    fi
+    
+  fi
+}
+
+execution() {
+  if [ "${UserCommand}" = "init" ]; then
+    init_git
+    elif [ "${UserCommand}" = "post" ]; then
+    create_post
+    elif [ "${UserCommand}" = "preview" ]; then
+    preview
+    elif [ "${UserCommand}" = "build" ]; then
+    build
+    elif [ "${UserCommand}" = "deploy" ]; then
+    deploy_build
+    elif [ "${UserCommand}" = "clean" ]; then
+    clean
+    elif [ "${UserCommand}" = "-h" ] || [ "${UserCommand}" = "--help" ] ; then
+    help
+  else
+    echo "${INDICATOR} Run JekySimple with a command." >&2
+    echo "${INDICATOR} Use '-h' or '--help' flags for information." >&2
+  fi
+}
+
+init_git() {
+  if [ "${GitUsername}" = "UNSET" ] || [ "${GitPassword}" = "UNSET" ] || [ "${RepositoryName}" = "UNSET" ] || [ -z "${GitHost}" ] || [ -z "${GitUsername}" ] || [ -z "${GitPassword}" ] || [ -z "${RepositoryName}" ] ; then
+    echo "You can't clone without configuring Git Credentials properly." >&2
+    sleep 1
+    echo "Edit the configuration file according to your settings." >&2
+    exit
+  fi
+  
+  echo "${INDICATOR} Working on '${JekyLocal}' directory.."
+  if [ -d ${JekyLocal}/${RepositoryName} ]; then
+    echo -n "${INDICATOR} Repository '${RepositoryName}' exists! Overwrite? (y/n) "
+    read Overwrite
+    if [ "${Overwrite}" = "y" ] || [ "${Overwrite}" = "Y" ] ; then
+      rm -rf ${JekyLocal}/${RepositoryName}
+    else
+      exit
+    fi
+  fi
+  
+  echo -n "${INDICATOR} Initialize repository as new? (y/n) "
+  read InitRepository
+  
+  if [ "${InitRepository}" = "n" ] || [ "${InitRepository}" = "N" ] ; then
+    git clone https://${GitHost}/${GitUsername}/${RepositoryName}.git ${JekyLocal}/${RepositoryName}
+    if [ "${PagesBranch}" = "true" ]; then
+      git -C "${JekyLocal}/${RepositoryName}" checkout gh-pages
+      git -C "${JekyLocal}/${RepositoryName}" config remote.origin.url https://${GitUsername//@/%40}:${GitPassword//@/%40}@${GitHost}/${GitUsername}/${RepositoryName}.git
+      git -C "${JekyLocal}/${RepositoryName}" push -u origin gh-pages
+    fi
+    elif [ "${InitRepository}" = "y" ] || [ "${InitRepository}" = "Y" ] ; then
+    mkdir ${JekyLocal}/${RepositoryName}
+    echo "# ${RepositoryName}" >> ${JekyLocal}/${RepositoryName}/README.md
+    git -C "${JekyLocal}/${RepositoryName}" init
+    if [ "${PagesBranch}" = "true" ]; then
+      git -C "${JekyLocal}/${RepositoryName}" checkout -b gh-pages
+    fi
+    git -C "${JekyLocal}/${RepositoryName}" remote add origin https://${GitUsername//@/%40}:${GitPassword//@/%40}@${GitHost}/${GitUsername}/${RepositoryName}.git
+    git -C "${JekyLocal}/${RepositoryName}" add README.md
+    git -C "${JekyLocal}/${RepositoryName}" commit -m "Initial Commit via @JekySimple"
+    if [ "${PagesBranch}" = "true" ]; then
+      git -C "${JekyLocal}/${RepositoryName}" push -u origin gh-pages
+    else
+      git -C "${JekyLocal}/${RepositoryName}" push -u origin master
+    fi
+  else
+      exit
+  fi
+  
+  echo "${INDICATOR} Location: ${JekyLocal}/${RepositoryName}"
+  exit
+}
+
+create_post() {
+  echo "${INDICATOR} Importing post template.."
+  . ${JekyTemplates}/${PostTemplate}
+  sleep 1
+  echo "${INDICATOR} Done!"
+  export OutputFile=$(echo ${JekyPosts}/${FileName,,})
+  echo "${INDICATOR} Edit ${FileName,,}.${PostExtension}"
+  sleep 1
+  if [ "${TextEditor}" = "nano" ]; then
+    ${TextEditor} ${OutputFile}.${PostExtension}
+  else
+    ${TextEditor} ${OutputFile}.${PostExtension} &
+  fi
+}
+
+preview() {
+  clean
+  echo "${INDICATOR} Initializing Jekyll.."
+  export JEKYLL_ENV=${BuildType}
+  read -p "${INDICATOR} Enable incremental build? (y/n) " Incremental
+  if [ "${Incremental}" = "y" ] || [ "${Incremental}" = "Y" ] ; then
+    jekyll serve --incremental --watch --source ${JekySource} --destination ${JekyBuild}
+  else
+    jekyll serve --source ${JekySource} --destination ${JekyBuild}
+  fi
+}
+
+build() {
+  clean
+  echo "${INDICATOR} Initializing Jekyll.."
+  export JEKYLL_ENV=${BuildType}
+  read -p "${INDICATOR} Enable incremental build? (y/n) " Incremental
+  read -p "${INDICATOR} Watch and rebuild? (y/n) " Watch
+  if [ "${Incremental}" = "y" ] && [ "${Watch}" = "y" ] ; then
+    jekyll build --incremental --watch --source ${JekySource} --destination ${JekyBuild}
+    elif [ "${Watch}" = "y" ] && [ "${Incremental}" != "y" ] ; then
+    jekyll build --watch --source ${JekySource} --destination ${JekyBuild}
+    elif [ "${Incremental}" = "y" ] && [ "${Watch}" != "y" ] ; then
+    jekyll build --incremental --no-watch --source ${JekySource} --destination ${JekyBuild}
+  else
+    jekyll build --source ${JekySource} --destination ${JekyBuild}
+  fi
+  fallback
+}
+
+fallback() {
+  if [ "${UserCommand}" != "init" ]; then
+    if [ "${AutoDeploy}" = "true" ]; then
+      read -p "${INDICATOR} Deploy build now? (y/n) " GitPush
+      if [ "${GitPush}" = "y" ] || [ "${GitPush}" = "Y" ] ; then
+        deploy_build
+      fi
+    fi
+    read -p "${INDICATOR} Keep build files? (y/n) " KeepBuild
+    if [ "${KeepBuild}" != "y" ] && [ "${KeepBuild}" != "Y" ] ; then
+      clean
+    fi
+  fi
+  exit
+}
+
+deploy_build() {
+  echo "${INDICATOR} Deploying changes..."
+  sleep 1
+  
+  if [ "${WebServer}" = "true" ]; then
+    echo "${INDICATOR} WebServer enabled! Deploying build files to local server.."
+    sleep 1
+    rm -rf ${JekyLocal}/* && cp -a ${JekyBuild}/* ${JekyLocal}
+    echo "${INDICATOR} Done!"
+    exit
+  fi
+  
+  if [ "${GitUsername}" = "UNSET" ] || [ "${GitPassword}" = "UNSET" ] || [ "${RepositoryName}" = "UNSET" ] || [ -z "${GitHost}" ] || [ -z "${GitUsername}" ] || [ -z "${GitPassword}" ] || [ -z "${RepositoryName}" ] ; then
+    echo "You can't deploy without configuring Git Credentials properly." >&2
+    sleep 1
+    echo "Edit the configuration file according to your settings." >&2
+    exit
+  fi
+  
+  if [ -d ${JekyLocal}/${RepositoryName} ]; then
+    echo "${INDICATOR} Preparing local directory.."
+    git -C "${JekyLocal}/${RepositoryName}" clean -xfd && git -C "${JekyLocal}/${RepositoryName}" reset --hard && git -C "${JekyLocal}/${RepositoryName}" pull && rm -rf ${JekyLocal}/${RepositoryName}/*
+  fi
+  
+  if [ "${PagesBuild}" = "true" ]; then
+    echo "${INDICATOR} GitHub Pages enabled! Deploying Jekyll source.."
+    sleep 1
+    cp -a ${JekySource}/* ${JekyLocal}/${RepositoryName}
+    sleep 1
+    elif [ -d "${JekyBuild}" ] && [ "${PagesBuild}" != "true" ]; then
+    cp -a ${JekyBuild}/* ${JekyLocal}/${RepositoryName}
+    sleep 1
+  else
+    echo "${INDICATOR} Build Jekyll source first."
+    exit
+  fi
+  
+  echo "${INDICATOR} Initializing git commit..."
+  if [ "${AutoCommit}" = "true" ]; then
+    git -C "${JekyLocal}/${RepositoryName}" add . && git -C "${JekyLocal}/${RepositoryName}" commit -m "${CommitDescription}"
+    elif [ "${AutoCommit}" != "true" ]; then
+    echo -n "${INDICATOR} Commit Description: "
+    read ManualCommit
+    git -C "${JekyLocal}/${RepositoryName}" add . && git -C "${JekyLocal}/${RepositoryName}" commit -m "${ManualCommit}"
+  fi
+  sleep 1
+  echo "${INDICATOR} Done!"
+  sleep 1
+  
+  echo "${INDICATOR} Pushing changes.."
+  git -C "${JekyLocal}/${RepositoryName}" push
+  sleep 1
+}
+
+clean() {
+  if [ -d "${JekyBuild}" ]; then
+    echo "${INDICATOR} Cleaning Jekyll build files.."
+    rm -rf ${JekyBuild}
+    sleep 1
+    echo "${INDICATOR} Done!"
+  fi
+  
+  if [ -d "${JekySource}/.asset-cache" ]; then
+    echo "${INDICATOR} Cleaning Jekyll cache.."
+    rm -rf ${JekySource}/.asset-cache
+    elif [ -f "${JekySource}/.jekyll-metadata" ]; then
+    echo "${INDICATOR} Cleaning Jekyll metadata.."
+    rm ${JekySource}/.jekyll-metadata
+  fi
+  sleep 1
+  echo "${INDICATOR} Done!"
+}
+
+help() {
+cat << EOF
+Usage:
+
+  ${0##*/} <command>
+
+Commands:
+  init                 Initialize or clone git repository.
+  post                 New post using templates with a text editor.
+  preview              Preview site locally.
+  build                Build site only.
+  deploy               Deploy to git repostiory or local webserver.
+  clean                Clean build files including metadata and cache.
+EOF
+}
+
+# Read Config
+export UserCommand="$1"
+read_config
+
+# Lock & Secure
+safe_mode
+
+# Execute User Commands
+execution
+
+exit
+
+# JekySimple by @Saleem
+# Website: http://www.ismoothblog.com
+

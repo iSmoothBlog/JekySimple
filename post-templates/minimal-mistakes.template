@@ -1,0 +1,41 @@
+#
+# Minimal Mistakes - Post Template
+#
+
+# Content
+minimal_mistakes_template() {
+cat > ${JekyPosts}/${FileName,,}.${PostExtension} << EOF
+---
+title: ${PostTitle}
+date: ${PostDate}
+excerpt: 
+categories: 
+tags: 
+header:
+  overlay_image: 
+  overlay_filter: 0.5
+  teaser: 
+---
+$TOC
+EOF
+}
+
+# User input
+post_fields() {
+echo "${INDICATOR} Create a new post."
+
+echo -n "${INDICATOR} File Title: "
+read FileTitle
+
+echo -n "${INDICATOR} Include TOC? (y/n) "
+read toc
+if [ "$Toc" = "y" ] || [ "$Toc" = "Y" ] ; then
+TOC="{% include toc %}"
+fi
+
+export FileName=$(echo ${FileDate}-${FileTitle// /-})
+}
+
+# Call
+post_fields
+minimal_mistakes_template
